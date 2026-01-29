@@ -1,0 +1,38 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_USERNAME = "maurya250"
+        BACKEND_IMAGE = "mern-backend"
+        FRONTEND_IMAGE = "mern-frontend"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+
+    stages {
+
+        stage("Cleanup & Checkout") {
+            steps {
+                cleanupWs()
+                checkout scm
+
+                echo "Code checkout done automatically via SCM"
+            }
+        }
+
+    stage("Backend: security & quality scan") {
+            steps {
+                dir('backend') {
+                    echo "processing backend code"
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                    sh "trivy fs . > trivy-backend-report.txt || true"
+                    withSonarQubeEnv('SonarQube-Server') {
+                        sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=mern-backend -Dsonar.sources=. -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_AUTH_TOKEN"
+                    }
+                   
+                }
+            }
+        }
+
+    }
+}
