@@ -36,9 +36,8 @@ pipeline {
                 dir('backend') {
                     echo " building backend docker image"
                     sh "docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${IMAGE_TAG} ."
-                    sh "docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest .
-                    
-                    
+                    sh "docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest ."
+
                     //trivy image scan
                     sh "trivy image ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest > trivy-backend-image-report.txt"
                     
@@ -88,7 +87,7 @@ pipeline {
         stage('Deploy full stack') {
             steps {
                 script {
-                    echo "'deploying....."
+                    echo "deploying....."
                     sh "docker network create mern-network || true"
 
                     sh "docker rm -f mongodb backend frontend || true"
