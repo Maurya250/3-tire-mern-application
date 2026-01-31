@@ -13,7 +13,7 @@ pipeline {
 
         stage("Cleanup & Checkout") {
             steps {
-                cleanupWs()
+                cleanWs()
                 checkout scm
                 echo "Code checkout done automatically via SCM"
             }
