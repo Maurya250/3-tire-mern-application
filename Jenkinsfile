@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    tools {
+        nodejs 'node18'
+    }
+
     environment {
         DOCKERHUB_USERNAME = "maurya250"
         BACKEND_IMAGE = "mern-backend"
@@ -8,6 +12,7 @@ pipeline {
         IMAGE_TAG = "${BUILD_NUMBER}"
         SCANNER_HOME = tool 'sonar-scanner'
     }
+
 
     stages {
 
