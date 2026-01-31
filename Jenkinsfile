@@ -13,7 +13,6 @@ pipeline {
         SCANNER_HOME = tool 'sonar-scanner'
     }
 
-
     stages {
 
         stage("Cleanup & Checkout") {
@@ -24,103 +23,125 @@ pipeline {
             }
         }
 
+        /* ================= BACKEND ================= */
+
         stage("Backend: security & quality scan") {
             steps {
                 dir('backend') {
                     echo "processing backend code"
-                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+
                     sh "npm install"
-                    sh "trivy fs . --severity HIGH,CRITICAL --exit-code 0 > trivy-frontend-report.txt"
+
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
+                                    odcInstallation: 'DP-Check'
+
+                    sh "trivy fs . --severity HIGH,CRITICAL --exit-code 0 > trivy-backend-report.txt"
+
                     withSonarQubeEnv('SonarQube-Server') {
                         sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=mern-backend -Dsonar.sources=."
+                    }
+
+                    timeout(time: 2, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
                     }
                 }
             }
         }
+
         stage("Backend: build & push docker image") {
             steps {
                 dir('backend') {
-                    echo " building backend docker image"
                     sh "docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${IMAGE_TAG} ."
                     sh "docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest ."
 
-                    //trivy image scan
-                    sh "trivy image ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest > trivy-backend-image-report.txt"
-                    
+                    sh "trivy image ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest --severity HIGH,CRITICAL --exit-code 0 > trivy-backend-image-report.txt"
 
-                    // push backend image to dockerhub
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'DOCKERHUB_PASSWORD', usernameVariable: 'DOCKERHUB_USERNAME')]) {
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_PASSWORD')]) {
+
                         sh "echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin"
                         sh "docker push ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${IMAGE_TAG}"
                         sh "docker push ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest"
                     }
-
                 }
             }
         }
+
+        /* ================= FRONTEND ================= */
+
         stage("Frontend: security & quality scan") {
             steps {
                 dir('frontend') {
                     echo "processing frontend code"
-                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
-                    sh "trivy fs . > trivy-frontend-report.txt"
+
+                    sh "npm install"
+
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
+                                    odcInstallation: 'DP-Check'
+
+                    sh "trivy fs . --severity HIGH,CRITICAL --exit-code 0 > trivy-frontend-report.txt"
+
                     withSonarQubeEnv('SonarQube-Server') {
                         sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=mern-frontend -Dsonar.sources=."
+                    }
+
+                    timeout(time: 2, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
                     }
                 }
             }
         }
+
         stage("Frontend: build & push docker image") {
             steps {
                 dir('frontend') {
-                    echo " building frontend docker image"
                     sh "docker build -t ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${IMAGE_TAG} ."
                     sh "docker build -t ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest ."
-                    
-                    //trivy image scan
-                    sh "trivy image ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest > trivy-frontend-image-report.txt"
 
-                    // push frontend image to dockerhub
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', passwordVariable: 'DOCKERHUB_PASSWORD', usernameVariable: 'DOCKERHUB_USERNAME')]) {
+                    sh "trivy image ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest --severity HIGH,CRITICAL --exit-code 0 > trivy-frontend-image-report.txt"
+
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_PASSWORD')]) {
+
                         sh "echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin"
                         sh "docker push ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${IMAGE_TAG}"
                         sh "docker push ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest"
                     }
-
                 }
             }
         }
-        stage('Deploy full stack') {
+
+        stage("Deploy full stack") {
             steps {
                 script {
-                    echo "deploying....."
                     sh "docker network create mern-network || true"
-
                     sh "docker rm -f mongodb backend frontend || true"
 
                     sh "docker run -d --name mongodb --network mern-network mongo:latest"
+
                     sh """
-                        docker run -d -p 5000:5000 --name backend --network mern-network \\
-                        -e MONGODB_URI="mongodb://mongodb:27017/mern_db" \
-                        ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest
+                    docker run -d -p 5000:5000 --name backend --network mern-network \
+                    -e MONGODB_URI=mongodb://mongodb:27017/mern_db \
+                    ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest
                     """
+
                     sh """
-                        docker run -d -p 80:80 --name frontend --network mern-network \\
-                        -e REACT_APP_BACKEND_URL="http://localhost:5000" \
-                        ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest
+                    docker run -d -p 80:80 --name frontend --network mern-network \
+                    -e REACT_APP_BACKEND_URL=http://localhost:5000 \
+                    ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest
                     """
                 }
             }
         }
-
     }
+
     post {
         always {
             dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
             archiveArtifacts artifacts: '**/trivy-*-report.txt', allowEmptyArchive: true
             sh "docker logout || true"
-
         }
     }
-
 }
