@@ -24,7 +24,8 @@ pipeline {
                 dir('backend') {
                     echo "processing backend code"
                     dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
-                    sh "trivy fs . > trivy-backend-report.txt"
+                    sh "npm install"
+                    sh "trivy fs . --severity HIGH,CRITICAL --exit-code 0 > trivy-frontend-report.txt"
                     withSonarQubeEnv('SonarQube-Server') {
                         sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=mern-backend -Dsonar.sources=."
                     }
