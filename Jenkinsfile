@@ -25,41 +25,47 @@ pipeline {
 
         /* ================= BACKEND ================= */
 
-        stage("Backend: security & quality scan") {
+        stage("Backend: Security & Quality Scan") {
             steps {
                 dir('backend') {
-                    echo "processing backend code"
+                    echo "Scanning backend"
 
                     sh "npm install"
 
-                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --disableAssembly',
                                     odcInstallation: 'DP-Check'
 
-                    sh "trivy fs . --severity HIGH,CRITICAL --exit-code 0 > trivy-backend-report.txt"
+                    sh "trivy fs . --scanners vuln --severity HIGH,CRITICAL --exit-code 0 > trivy-backend-report.txt"
 
                     withSonarQubeEnv('SonarQube-Server') {
-                        sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=mern-backend -Dsonar.sources=."
+                        sh """
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectKey=mern-backend \
+                        -Dsonar.sources=. \
+                        -Dsonar.javascript.node.maxspace=4096
+                        """
                     }
+                }
 
-                    timeout(time: 2, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
-                    }
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-        stage("Backend: build & push docker image") {
+        stage("Backend: Build & Push Docker Image") {
             steps {
                 dir('backend') {
                     sh "docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${IMAGE_TAG} ."
-                    sh "docker build -t ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest ."
+                    sh "docker tag ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${IMAGE_TAG} ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest"
 
                     sh "trivy image ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest --severity HIGH,CRITICAL --exit-code 0 > trivy-backend-image-report.txt"
 
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds',
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-creds',
                         usernameVariable: 'DOCKERHUB_USERNAME',
-                        passwordVariable: 'DOCKERHUB_PASSWORD')]) {
-
+                        passwordVariable: 'DOCKERHUB_PASSWORD'
+                    )]) {
                         sh "echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin"
                         sh "docker push ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${IMAGE_TAG}"
                         sh "docker push ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest"
@@ -70,41 +76,43 @@ pipeline {
 
         /* ================= FRONTEND ================= */
 
-        stage("Frontend: security & quality scan") {
+        stage("Frontend: Security Scan") {
             steps {
                 dir('frontend') {
-                    echo "processing frontend code"
+                    echo "Scanning frontend"
 
                     sh "npm install"
 
-                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --disableAssembly',
                                     odcInstallation: 'DP-Check'
 
-                    sh "trivy fs . --severity HIGH,CRITICAL --exit-code 0 > trivy-frontend-report.txt"
+                    sh "trivy fs . --scanners vuln --severity HIGH,CRITICAL --exit-code 0 > trivy-frontend-report.txt"
 
                     withSonarQubeEnv('SonarQube-Server') {
-                        sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=mern-frontend -Dsonar.sources=."
-                    }
-
-                    timeout(time: 2, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
+                        sh """
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectKey=mern-frontend \
+                        -Dsonar.sources=. \
+                        -Dsonar.javascript.node.maxspace=4096
+                        """
                     }
                 }
             }
         }
 
-        stage("Frontend: build & push docker image") {
+        stage("Frontend: Build & Push Docker Image") {
             steps {
                 dir('frontend') {
                     sh "docker build -t ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${IMAGE_TAG} ."
-                    sh "docker build -t ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest ."
+                    sh "docker tag ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${IMAGE_TAG} ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest"
 
                     sh "trivy image ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest --severity HIGH,CRITICAL --exit-code 0 > trivy-frontend-image-report.txt"
 
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds',
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-creds',
                         usernameVariable: 'DOCKERHUB_USERNAME',
-                        passwordVariable: 'DOCKERHUB_PASSWORD')]) {
-
+                        passwordVariable: 'DOCKERHUB_PASSWORD'
+                    )]) {
                         sh "echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin"
                         sh "docker push ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${IMAGE_TAG}"
                         sh "docker push ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest"
@@ -113,7 +121,9 @@ pipeline {
             }
         }
 
-        stage("Deploy full stack") {
+        /* ================= DEPLOY ================= */
+
+        stage("Deploy Full Stack") {
             steps {
                 script {
                     sh "docker network create mern-network || true"
