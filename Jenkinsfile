@@ -19,34 +19,43 @@ pipeline {
             steps {
                 cleanWs()
                 checkout scm
-                echo "Code checkout done automatically via SCM"
+                echo "Code checkout done"
             }
         }
 
         /* ================= BACKEND ================= */
 
-        stage("Backend: Security & Quality Scan") {
+        stage("Backend: Security Scan") {
             steps {
                 dir('backend') {
-                    echo "Scanning backend"
-
                     sh "npm install"
 
                     dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --disableAssembly',
                                     odcInstallation: 'DP-Check'
 
                     sh "trivy fs . --scanners vuln --severity HIGH,CRITICAL --exit-code 0 > trivy-backend-report.txt"
+                }
+            }
+        }
 
+        stage("Backend: SonarQube Analysis") {
+            steps {
+                dir('backend') {
                     withSonarQubeEnv('SonarQube-Server') {
                         sh """
                         ${SCANNER_HOME}/bin/sonar-scanner \
                         -Dsonar.projectKey=mern-backend \
+                        -Dsonar.projectName=mern-backend \
                         -Dsonar.sources=. \
                         -Dsonar.javascript.node.maxspace=4096
                         """
                     }
                 }
+            }
+        }
 
+        stage("Backend: Quality Gate") {
+            steps {
                 timeout(time: 10, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
@@ -63,10 +72,10 @@ pipeline {
 
                     withCredentials([usernamePassword(
                         credentialsId: 'docker-hub-creds',
-                        usernameVariable: 'DOCKERHUB_USERNAME',
-                        passwordVariable: 'DOCKERHUB_PASSWORD'
+                        usernameVariable: 'DOCKERHUB_USER',
+                        passwordVariable: 'DOCKERHUB_PASS'
                     )]) {
-                        sh "echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin"
+                        sh "echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin"
                         sh "docker push ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:${IMAGE_TAG}"
                         sh "docker push ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest"
                     }
@@ -79,19 +88,24 @@ pipeline {
         stage("Frontend: Security Scan") {
             steps {
                 dir('frontend') {
-                    echo "Scanning frontend"
-
                     sh "npm install"
 
                     dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --disableAssembly',
                                     odcInstallation: 'DP-Check'
 
                     sh "trivy fs . --scanners vuln --severity HIGH,CRITICAL --exit-code 0 > trivy-frontend-report.txt"
+                }
+            }
+        }
 
+        stage("Frontend: SonarQube Analysis") {
+            steps {
+                dir('frontend') {
                     withSonarQubeEnv('SonarQube-Server') {
                         sh """
                         ${SCANNER_HOME}/bin/sonar-scanner \
                         -Dsonar.projectKey=mern-frontend \
+                        -Dsonar.projectName=mern-frontend \
                         -Dsonar.sources=. \
                         -Dsonar.javascript.node.maxspace=4096
                         """
@@ -110,10 +124,10 @@ pipeline {
 
                     withCredentials([usernamePassword(
                         credentialsId: 'docker-hub-creds',
-                        usernameVariable: 'DOCKERHUB_USERNAME',
-                        passwordVariable: 'DOCKERHUB_PASSWORD'
+                        usernameVariable: 'DOCKERHUB_USER',
+                        passwordVariable: 'DOCKERHUB_PASS'
                     )]) {
-                        sh "echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin"
+                        sh "echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin"
                         sh "docker push ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:${IMAGE_TAG}"
                         sh "docker push ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest"
                     }
@@ -125,24 +139,22 @@ pipeline {
 
         stage("Deploy Full Stack") {
             steps {
-                script {
-                    sh "docker network create mern-network || true"
-                    sh "docker rm -f mongodb backend frontend || true"
+                sh "docker network create mern-network || true"
+                sh "docker rm -f mongodb backend frontend || true"
 
-                    sh "docker run -d --name mongodb --network mern-network mongo:latest"
+                sh "docker run -d --name mongodb --network mern-network mongo:latest"
 
-                    sh """
-                    docker run -d -p 5000:5000 --name backend --network mern-network \
-                    -e MONGODB_URI=mongodb://mongodb:27017/mern_db \
-                    ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest
-                    """
+                sh """
+                docker run -d -p 5000:5000 --name backend --network mern-network \
+                -e MONGODB_URI=mongodb://mongodb:27017/mern_db \
+                ${DOCKERHUB_USERNAME}/${BACKEND_IMAGE}:latest
+                """
 
-                    sh """
-                    docker run -d -p 80:80 --name frontend --network mern-network \
-                    -e REACT_APP_BACKEND_URL=http://localhost:5000 \
-                    ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest
-                    """
-                }
+                sh """
+                docker run -d -p 80:80 --name frontend --network mern-network \
+                -e REACT_APP_BACKEND_URL=http://backend:5000 \
+                ${DOCKERHUB_USERNAME}/${FRONTEND_IMAGE}:latest
+                """
             }
         }
     }
